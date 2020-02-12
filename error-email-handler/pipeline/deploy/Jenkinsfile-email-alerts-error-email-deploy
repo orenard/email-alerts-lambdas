@@ -1,0 +1,74 @@
+pipeline {
+    agent any
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+    }
+    
+    parameters {
+        choice(name: 'STACK', choices: ['dev', 'stg', 'live'], description: 'Deployment Environment / Stack')
+        string(name: 'PROJECT_VERSION', description: 'Application Nexus Version')
+    }
+    
+    environment {
+    	// The AWS Function Name
+        PROJECT_PRODUCT="email-alerts-error-handler"
+        //The repository name in Nexus
+        PROJECT_ARTIFACT="email-alerts-error-lambda"
+        //File extension:
+        PROJECT_EXT="zip"
+        PROJECT_GROUP="com.bmj"
+        PROJECT_EXE="${PROJECT_ARTIFACT}.${PROJECT_EXT}"
+        
+        BUILD_VERSION_NAME = VersionNumber(
+            //versionNumberString: "#${stack}-${host}-${BUILD_ID}-${version}",
+            versionNumberString: "#${BUILD_ID}-${params.PROJECT_VERSION}",
+            projectStartDate: "2020-02-12",
+            skipFailedBuilds: true,
+        )
+    }
+    
+    stages {
+        stage('Bootstrap') {
+            steps {
+                echo 'Setting Build Version..'
+                script {
+                    currentBuild.displayName = "${BUILD_VERSION_NAME}"
+                }
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                echo 'Fetching Artifact..'
+                artifactResolver(
+                    failOnError: true,
+                    enableRepoLogging: true,                    
+                    releaseUpdatePolicy: "daily",
+                    releaseChecksumPolicy: "warn",
+                    snapshotUpdatePolicy: "daily",
+                    snapshotChecksumPolicy: "warn",
+                    
+                    artifacts: [[
+                        groupId: "${PROJECT_GROUP}",
+                        artifactId: "${PROJECT_ARTIFACT}",
+                        //cjp check this - does it have to be params?
+                        version: "${params.PROJECT_VERSION}",
+                        extension: "${PROJECT_EXT}",
+                        targetFileName: "${PROJECT_EXE}"
+                    ]]
+                )
+            }
+        }
+        
+        stage('Lambda Deployment') {
+            steps {
+                echo 'Deploy Lambda Zip..' 
+                echo 'process....'
+                sh "aws lambda update-function-code --function-name ${PROJECT_PRODUCT} --zip-file fileb://${PROJECT_EXE} --profile update_lambda_${STACK}"
+                echo 'end deploy....'
+            }
+        }
+    }
+}
